@@ -1,0 +1,31 @@
+[Unit]
+Description=Instasaver Telegram downloader
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=instasaver
+Group=instasaver
+WorkingDirectory=/opt/instasaver
+EnvironmentFile=/opt/instasaver/secrets/bot.env
+Environment=DATA_DIR=/opt/instasaver/data
+Environment=SECRETS_DIR=/opt/instasaver/secrets/cookies
+Environment=BOT_API_URL=http://127.0.0.1:8091
+Environment=PATH=/opt/instasaver/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/instasaver/.venv/bin/python -m instasaver.app
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+MemoryMax=1500M
+CPUQuota=150%
+TasksMax=128
+Nice=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/instasaver/data
+
+[Install]
+WantedBy=multi-user.target

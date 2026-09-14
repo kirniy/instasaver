@@ -1,0 +1,9 @@
+.venv/
+.env
+*.env
+work/
+data/
+secrets/
+__pycache__/
+.pytest_cache/
+*.session*
