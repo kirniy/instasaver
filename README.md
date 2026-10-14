@@ -2,7 +2,20 @@
 
 Russian Telegram downloader, deployed at [@instasaver_kirniy_bot](https://t.me/instasaver_kirniy_bot).
 
-Send a link. Default mode sends a streamable MP4 preview and the unchanged original as a document. `/settings` selects video, original or ZIP. Instagram photo/mixed posts use gallery-dl and multi-file results are packed into ZIP. Instagram captions are sent as copyable Russian-labeled rich messages; ZIPs include `caption.txt` with the full caption and source URL. `/cancel` and the cancel button terminate the current subprocess group. `/status` shows your queue.
+Send a link. Media arrives **clean, with no caption**, so it forwards without junk:
+
+- **Video** (default): streamable MP4, then the unchanged original as a document. Carousels arrive as native Telegram albums (up to 10 per album; oversized items as documents).
+- **Оригинал**: original file(s) as documents; several files are zipped.
+- **ZIP**: everything in one archive plus `caption.txt`.
+- **Звук**: mp3 extracted from the video, with title/performer tags.
+
+Files are named after the creator and post: `atlanta.night — HORRORLAND ATLANTA x BUSHIDO ZHO🎃.mp4` (handle for Instagram/TikTok/X, channel for YouTube; first caption line when the site title is generic; Unicode-safe, ≤160 bytes).
+
+After the media comes a separate **post card**: creator (linked to their profile), display name, title, the full caption in an expandable quote (long captions continue in follow-ups), views/likes/comments/duration/date, plus «Открыть пост» and «Звук mp3» buttons.
+
+Repeat links are **instant**: successful deliveries are cached by normalized URL (share junk like `igsh`, `vrfl`, `si`, `utm_*` stripped; youtu.be ≡ youtube.com) for 7 days and resent by Telegram `file_id`. Results fetched with the owner's cookies are cached privately for the owner only.
+
+If owner cookies are expired, the worker retries anonymously (and vice versa), so a dead session never blocks public posts. `/cancel` and the cancel button terminate the current subprocess group. `/status` shows your queue.
 
 Inspired by [Pablo Stanley's Yoinks](https://github.com/pablostanley/yoinks), using its yt-dlp + FFmpeg architecture and format preference approach. This is a separate Python Telegram service, not a wrapper around Yoinks' interactive terminal UI. Yoinks' MIT notice is retained in `LICENSE.yoinks`.
 

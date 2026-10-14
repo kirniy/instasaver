@@ -2,6 +2,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -154,7 +155,7 @@ async def probe(path):
         return None
 
 
-async def playback(path, folder):
+async def playback(path, folder, stem=None):
     info = await probe(path)
     if not info or not info['width'] or not info['height']:
         return None,None,None
@@ -164,7 +165,8 @@ async def playback(path, folder):
         and not any(x.get('rotation',0) for x in s.get('side_data_list',[]))
         and not s.get('tags',{}).get('rotate')
         and all(a.get('codec_name')=='aac' for a in info['audio']))
-    target = folder / 'Для просмотра.mp4'
+    target = folder / 'preview' / ((stem or 'Для просмотра') + '.mp4')
+    target.parent.mkdir(exist_ok=True)
     args=['ffmpeg','-nostdin','-v','error','-y','-protocol_whitelist','file,pipe','-format_whitelist',SAFE_FORMATS,'-i',str(path),'-map','0:v:0','-map','0:a?']
     if simple:
         args += ['-c','copy']
@@ -175,7 +177,7 @@ async def playback(path, folder):
         target.unlink(missing_ok=True)
         return None,None,None
     actual=await probe(target)
-    thumb=folder/'preview.jpg'
+    thumb=target.with_suffix('.jpg')
     code,_=await run_process(['ffmpeg','-nostdin','-v','error','-y','-ss','0','-i',str(target),'-frames:v','1','-vf','scale=320:320:force_original_aspect_ratio=decrease','-q:v','5',str(thumb)],timeout=30)
     return target, actual, thumb if code==0 and thumb.stat().st_size<200000 else None
 
@@ -292,3 +294,139 @@ async def direct_file(url,folder,proxy,progress):
                 raise DownloadError('Сайт не отвечает. Попробуйте отправить ссылку ещё раз.') from None
             await progress('Переподключаюсь к сайту…')
             await asyncio.sleep(2**attempt)
+
+
+GENERIC_TITLE=('video by ','photo by ','post by ','reel by ','instagram post','tiktok video','untitled')
+HANDLE_SITES={'instagram':'https://www.instagram.com/{}/','tiktok':'https://www.tiktok.com/@{}','twitter':'https://x.com/{}'}
+
+
+def _site(url):
+    host=(urlsplit(url).hostname or '').lower().removeprefix('www.').removeprefix('m.')
+    for site,domains in {'instagram':('instagram.com',),'tiktok':('tiktok.com',),'twitter':('x.com','twitter.com'),
+            'youtube':('youtube.com','youtu.be')}.items():
+        if any(host==d or host.endswith('.'+d) for d in domains):
+            return site
+    return host
+
+
+def _first_line(text):
+    for line in (text or '').splitlines():
+        line=re.sub(r'https?://\S+','',line)
+        line=re.sub(r'(?:^|\s)[#@][\w.]+','',line).strip(' \t-–—|·:')
+        if len(line)>=3:
+            return line
+    return ''
+
+
+def _clip(text,limit):
+    text=re.sub(r'\s+',' ',text).strip()
+    if len(text)<=limit:
+        return text
+    cut=text[:limit].rsplit(' ',1)[0] if ' ' in text[:limit] else text[:limit]
+    return cut.rstrip(' ,.;:-–—')+'…'
+
+
+def post_info(folder,url):
+    """Normalized creator/title/stats from yt-dlp or gallery-dl metadata."""
+    site=_site(url)
+    data={}
+    for path in sorted(Path(folder).rglob('*.json'),key=lambda p:(not p.name.endswith('.info.json'),str(p))):
+        if path.name=='manifest.json' or path.stat().st_size>5_000_000:
+            continue
+        try:
+            value=json.loads(path.read_text())
+        except (ValueError,OSError):
+            continue
+        if isinstance(value,dict) and value.get('_type')!='playlist':
+            data=value
+            break
+    def pick(*keys):
+        for k in keys:
+            v=data.get(k)
+            if v not in (None,'','NA') and not isinstance(v,(dict,list)):
+                return v
+    description=data.get('description') or data.get('caption') or ''
+    if isinstance(description,dict):
+        description=description.get('text') or ''
+    if site=='instagram':
+        handle=pick('channel','username','owner_username','uploader_id')
+        name=pick('uploader','fullname','full_name')
+    elif site=='tiktok':
+        handle=pick('uploader','uploader_id','author')
+        name=pick('channel','creator','nickname')
+    elif site=='twitter':
+        handle=pick('uploader_id','author_name','username')
+        name=pick('uploader','nick')
+    else:
+        handle=None
+        name=pick('channel','uploader','artist','creator','uploader_id','author','username')
+    if handle and not re.fullmatch(r'[\w.\-]{1,40}',str(handle)) or (handle and str(handle).isdigit()):
+        handle=None
+    handle=str(handle).lstrip('@') if handle else None
+    name=str(name).strip() if name else None
+    creator=('@'+handle) if handle else name or ''
+    profile=pick('uploader_url','channel_url') if site not in HANDLE_SITES else None
+    if handle and site in HANDLE_SITES:
+        profile=HANDLE_SITES[site].format(handle)
+    title=str(pick('track','title','fulltitle') or '')
+    if name and title.lower().startswith(name.lower()+' - '):
+        title=title[len(name)+3:]
+    generic=not title or title.lower().startswith(GENERIC_TITLE) or title==str(data.get('id',''))
+    if site in ('instagram','tiktok','twitter') or generic:
+        title=_first_line(description) or ('' if generic else title)
+    date=pick('upload_date')
+    if date and re.fullmatch(r'\d{8}',str(date)):
+        date=f'{date[6:8]}.{date[4:6]}.{date[:4]}'
+    elif isinstance(data.get('date'),str) and re.match(r'\d{4}-\d\d-\d\d',data['date']):
+        date='.'.join(reversed(data['date'][:10].split('-')))
+    else:
+        date=None
+    num=lambda *k:(lambda v:int(v) if isinstance(v,(int,float)) and v>=0 else None)(pick(*k))
+    return dict(site=site,creator=creator,name=name if handle and name and name.lower()!=handle.lower() else None,
+        profile=profile,title=_clip(title,200),description=description.strip() if isinstance(description,str) else '',
+        likes=num('like_count','likes'),views=num('view_count','play_count'),comments=num('comment_count','comments'),
+        duration=num('duration'),date=date,artist=pick('artist','creator'),track=pick('track'),
+        id=str(pick('id','display_id','post_shortcode','shortcode') or ''))
+
+
+def nice_name(info,limit=160):
+    """Human file stem: creator — title. Never empty, never a path."""
+    parts=[p for p in (info.get('creator','').lstrip('@'),_clip(info.get('title') or '',70)) if p]
+    stem=' — '.join(parts) or info.get('id') or 'Instasaver'
+    stem=re.sub(r'[\x00-\x1f\x7f/\\:*?"<>|]+',' ',stem)
+    stem=re.sub(r'\s+',' ',stem).strip(' .')
+    if len(stem.encode())>limit:
+        cut=stem
+        while len((cut+'…').encode())>limit:
+            cut=cut[:-1]
+        stem=(cut.rsplit(' ',1)[0] if ' ' in cut[len(parts[0]) if parts else 0:] else cut).rstrip(' ,.;:-–—')+'…'
+    return stem.rstrip(' .') or 'Instasaver'
+
+
+def rename_files(files,stem):
+    """Rename downloads in place; numbered when there are several."""
+    out=[]
+    for i,f in enumerate(files,1):
+        name=f'{stem} {i:02}{f.suffix.lower()}' if len(files)>1 else stem+f.suffix.lower()
+        target=f.with_name(name)
+        if target!=f:
+            if target.exists():
+                target=f.with_name(f'{target.stem} {f.stat().st_ino}{target.suffix}')
+            f.rename(target)
+        out.append(target)
+    return out
+
+
+async def extract_audio(path,folder,stem,info=None):
+    target=Path(folder)/'audio'/(stem+'.mp3');target.parent.mkdir(exist_ok=True)
+    meta=[]
+    if info:
+        for key,value in (('title',info.get('track') or info.get('title')),('artist',info.get('artist') or info.get('name') or info.get('creator'))):
+            if value:
+                meta+=['-metadata',f'{key}={value}']
+    code,raw=await run_process(['ffmpeg','-nostdin','-v','error','-y','-protocol_whitelist','file,pipe','-format_whitelist',SAFE_FORMATS,
+        '-i',str(path),'-map','0:a:0','-vn','-c:a','libmp3lame','-q:a','2',*meta,str(target)],cwd=folder,timeout=600,max_disk=MAX_BYTES)
+    if code or not target.is_file() or not target.stat().st_size:
+        target.unlink(missing_ok=True)
+        raise DownloadError('В этом материале нет звука.' if 'matches no streams' in raw else 'Не получилось вытащить звук.')
+    return target

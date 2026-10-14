@@ -16,3 +16,11 @@
 Historical test failures are retained briefly in the job database: an obsolete Google sample URL returned HTTP 403; a large archive initially timed out connecting to its source. DNS address failover and bounded HTTP retries were added, and the large-archive test subsequently succeeded. These are not represented as permanently reliable source URLs.
 
 No guarantee is made that every website, private post, DRM stream, or future expired cookie remains downloadable. The tested workflows above passed on Frankfurt2.
+
+# Verification — 2026-10-14 (clean delivery update)
+
+- 46 automated tests pass (new: creator/title naming for Instagram, X, YouTube and gallery-dl metadata, unsafe-name sanitizing, numbered carousels, URL cache keys, card escaping/splitting, private cache isolation).
+- Live on Frankfurt2: Instagram Reel delivered as captionless video + original `atlanta.night — HORRORLAND ATLANTA x BUSHIDO ZHO🎃.mp4` + separate card; expired owner cookies fell back to anonymous automatically.
+- Same reel via a different share link (`/reels/…?igsh=`) replayed instantly from cache with no download.
+- Audio mode delivered `atlanta.night — HORRORLAND ATLANTA x BUSHIDO ZHO🎃.mp3` with card.
+- Local Bot API accepted a mixed photo/video `sendMediaGroup` with `file://` paths (test messages deleted).
